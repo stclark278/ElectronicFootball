@@ -1,1550 +1,1547 @@
-   1 %include "/usr/local/share/csc314/asm_io.inc"
-   2
-   3 ; how frequently we check for input
-   4 ; 1,000,000 - 1 second
-   5 %define TICK 50000      ; 20 hertz refresh rate
-   6 %define SNAP 1000000    ;wait 1 second after tackled
-   7
-   8 ; the file that stores the initial state
-   9 %define BOARD_FILE 'board.txt'
-  10 %define END_SCREEN_FILE 'endscreen.txt'
-  11
-  12 ; how to represent everything
-  13 %define WALL_CHAR '#'
-  14 %define PLAYER_CHAR 'O'
-  15 %define OPPONENT_CHAR 'X'
-  16 %define PLAYER_1_CHAR '1'
-  17 %define PLAYER_2_CHAR '2'
-  18
-  19 ; the size of the game screen in characters
-  20 %define HEIGHT 16
-  21 %define WIDTH 89
-  22
-  23 ; the player starting position.
-  24 ; top left is considered (0,0)
-  25 ; player 1
-  26 %define STARTX 67
-  27 %define STARTY 6
-  28 %define START_NT_X 49
-  29 %define START_NT_Y 6
-  30 %define START_TDE_X 49
-  31 %define START_TDE_Y 3
-  32 %define START_BDE_X 49
-  33 %define START_BDE_Y 9
-  34 %define START_LB_X 37
-  35 %define START_LB_Y 6
-  36 %define START_DB_X 19
-  37 %define START_DB_Y 6
-  38 %define XMIN 18
-  39
-  40 ;player 2
-  41 %define STARTX_P2 19
-  42 %define STARTY_P2 6
-  43 %define START_NT_X_P2 37
-  44 %define START_NT_Y_P2 6
-  45 %define START_TDE_X_P2 37
-  46 %define START_TDE_Y_P2 3
-  47 %define START_BDE_X_P2 37
-  48 %define START_BDE_Y_P2 9
-  49 %define START_LB_X_P2 49
-  50 %define START_LB_Y_P2 6
-  51 %define START_DB_X_P2 67
-  52 %define START_DB_Y_P2 6
-  53 %define XMIN_P2 67
-  54
-  55
-  56 ; these keys do things
-  57 %define EXITCHAR 'x'
-  58 %define UPCHAR 'w'
-  59 %define LEFTCHAR 'a'
-  60 %define DOWNCHAR 's'
-  61 %define RIGHTCHAR 'd'
-  62 %define KICKCHAR 'k'
-  63 %define GIVEUPCHAR  'g'
-  64
-  65 ; colors
-  66 %define COLOR_YELLOW 27,"[33m"
-  67 %define COLOR_DEFAULT 27, "[0m"
-  68 %define COLOR_BLUE 27, "[34m"
-  69 %define COLOR_CYAN 27, "[36m"
-  70 %define COLOR_GREEN 27, "[32m"
-  71 %define COLOR_RED 27, "[31m"
-  72
-  73 segment .data
-  74
-  75     ; used to fopen() the board file defined above
-  76     board_file          db BOARD_FILE,0
-  77     end_screen_file     db END_SCREEN_FILE,0
-  78
-  79     ; used to change the terminal mode
-  80     mode_r              db "r",0
-  81     raw_mode_on_cmd     db "stty raw -echo",0
-  82     raw_mode_off_cmd    db "stty -raw echo",0
-  83
-  84     ; called by system() to clear/refresh the screen
-  85     clear_screen_cmd    db "clear",0
-  86
-  87     ; things the program will print
-  88     help_str            db 13,10,COLOR_CYAN,"Controls: ", \
-  89                             UPCHAR,"=UP / ", \
-  90                             LEFTCHAR,"=LEFT / ", \
-  91                             DOWNCHAR,"=DOWN / ", \
-  92                             RIGHTCHAR,"=RIGHT",13,10, \
-  93                             KICKCHAR,"=KICK (> 50 to go PUNT < 50 to go FIELDGOAL) / ", \
-  94                             GIVEUPCHAR,"=GIVE UP / ", \
-  95                             EXITCHAR,"=EXIT", \
-  96                             COLOR_DEFAULT,13,10,10,0
-  97
-  98     intro_fmt           db "Welcome to Electronic Football!!",10,"Made by Steven Clark",10,"CSC 314 Fall 2020",10,10,"Press ENTER to Continue",0
-  99
- 100     num_players_fmt     db 13,"How many players (1 or 2)? ",0
- 101     difficulty_fmt      db 13,"What difficulty (e = easy, h = hard)? ",0
- 102
- 103     scoreboard_fmt      db "Timer     Player 1 Score     Player 2 Score     Down     To Go     Ball On     Player", \
- 104                             13,10,COLOR_YELLOW,"%2d:%d%d           %2d                 %2d            %d        %2d          %2d         %d", \
- 105                             COLOR_DEFAULT,13,10,10,0
- 106
- 107     color_magenta       db  27, "[95m",0
- 108     color_red           db  27, "[31m",0
- 109     color_blue          db  27, "[34m",0
- 110     color_yellow        db  27, "[33m",0
- 111     color_green         db  27, "[32m",0
- 112     color_default       db  27, "[0m",0
- 113
- 114 segment .bss
- 115
- 116     ; this array stores the current rendered gameboard (HxW)
- 117     board   resb    (HEIGHT * WIDTH)
- 118
- 119     ; these variables store the current player position
- 120     xpos    resd    1
- 121     ypos    resd    1
- 122
- 123     ; these variables store the current opponent positions
- 124
- 125     NTx     resd    1
- 126     NTy     resd    1
- 127     TDEx    resd    1
- 128     TDEy    resd    1
- 129     BDEx    resd    1
- 130     BDEy    resd    1
- 131     LBx     resd    1
- 132     LBy     resd    1
- 133     DBx     resd    1
- 134     DBy     resd    1
- 135     xmin    resd    1
- 136
- 137     ; scoreboard variables
- 138
- 139     player          resd    1
- 140     timer           resd    1
- 141     minutes         resd    1
- 142     sec_tens        resd    1
- 143     sec_ones        resd    1
- 144     player1_score   resd    1
- 145     player2_score   resd    1
- 146     ball_on         resd    1
- 147     score_distance  resd    1
- 148     first_down_distance     resd    1
- 149     down            resd    1
- 150     distance_ran    resd    1
- 151     winner          resd    1
- 152     num_players     resd    1
- 153     difficulty      resd    1
- 154
- 155
- 156 segment .text
- 157
- 158     global  asm_main
- 159     global  raw_mode_on
- 160     global  raw_mode_off
- 161     global  init_board
- 162     global  render
- 163
- 164     extern  system
- 165     extern  putchar
- 166     extern  getchar
- 167     extern  printf
- 168     extern  fopen
- 169     extern  fread
- 170     extern  fgetc
- 171     extern  fclose
- 172     extern  usleep
- 173     extern  fcntl
- 174
- 175     extern  time
- 176     extern  srand
- 177     extern  rand
- 178
- 179 asm_main:
- 180     enter   0,0
- 181     pusha
- 182     ;***************CODE STARTS HERE***************************
- 183
- 184     ;srand ( time(NULL))
- 185     push    0
- 186     call    time
- 187     add     esp, 4
- 188
- 189     push    eax
- 190     call    srand
- 191     add     esp, 4
- 192
- 193     ; intro screen and set number of players and difficulty
- 194
- 195     push    clear_screen_cmd
- 196     call    system
- 197     add     esp, 4
- 198
- 199     push    intro_fmt
- 200     call    printf
- 201     add     esp, 4
- 202     call    getchar
- 203
- 204     ask_num_players:
- 205     push    clear_screen_cmd
- 206     call    system
- 207     add     esp, 4
- 208
- 209     push    num_players_fmt
- 210     call    printf
- 211     add     esp, 4
- 212
- 213     call    getchar
- 214     cmp     eax, '1'
- 215     jne     check_2_players
- 216         mov     DWORD [num_players], 1
- 217         jmp     ask_difficulty
- 218     check_2_players:
- 219     cmp     eax, '2'
- 220     jne     ask_num_players
- 221         mov     DWORD [num_players], 2
- 222
- 223     ask_difficulty:
- 224     push    clear_screen_cmd
- 225     call    system
- 226     add     esp, 4
- 227
- 228     push    difficulty_fmt
- 229     call    printf
- 230     add     esp, 4
- 231
- 232     call    getchar
- 233     cmp     eax, 'e'
- 234     jne     check_hard_difficulty
- 235         mov     DWORD [difficulty], 1
- 236         jmp     start_game
- 237     check_hard_difficulty:
- 238     cmp     eax, 'h'
- 239     jne     ask_difficulty
- 240         mov     DWORD [difficulty], 2
- 241
- 242     start_game:
- 243     ; put the terminal in raw mode so the game works nicely
- 244     call    raw_mode_on
- 245
- 246     ; read the game board file into the global variable
- 247     call    init_board
- 248
- 249     coin_flip:
- 250     call    rand
- 251     cdq
- 252     mov     ebx, 2
- 253     idiv    ebx
- 254     cmp     edx, 1
- 255     je      coin_flip_cont
- 256         mov     DWORD [player], 1
- 257         jmp     coin_flip_end
- 258     coin_flip_cont:
- 259     mov     DWORD [player], 2
- 260     coin_flip_end:
- 261
- 262     ; set scoreboard to starting values
- 263     mov     DWORD [timer], 13200
- 264     mov     DWORD [minutes], 10
- 265     mov     DWORD [sec_tens], 0
- 266     mov     DWORD [sec_ones], 0
- 267     mov     DWORD [player1_score], 0
- 268     mov     DWORD [player2_score], 0
- 269     mov     DWORD [score_distance], 80
- 270     mov     DWORD [down], 1
- 271     mov     DWORD [first_down_distance], 10
- 272     mov     DWORD [ball_on], 20
- 273
- 274     restart_game_loop:
- 275
- 276     dec     DWORD [timer]
- 277     cmp     DWORD [timer], 1200
- 278     jle     game_loop_timer_zero
- 279
- 280
- 281     ; set the player at the proper start position
- 282     cmp     DWORD [player], 2
- 283     je      player2_setup
- 284
- 285     mov     DWORD [xpos], STARTX
- 286     mov     DWORD [ypos], STARTY
- 287     mov     DWORD [NTx], START_NT_X
- 288     mov     DWORD [NTy], START_NT_Y
- 289     mov     DWORD [TDEx], START_TDE_X
- 290     mov     DWORD [TDEy], START_TDE_Y
- 291     mov     DWORD [BDEx], START_BDE_X
- 292     mov     DWORD [BDEy], START_BDE_Y
- 293     mov     DWORD [LBx], START_LB_X
- 294     mov     DWORD [LBy], START_LB_Y
- 295     mov     DWORD [DBx], START_DB_X
- 296     mov     DWORD [DBy], START_DB_Y
- 297     mov     DWORD [xmin], XMIN
- 298     jmp     positions_set
- 299
- 300     player2_setup:
- 301
- 302     mov     DWORD [xpos], STARTX_P2
- 303     mov     DWORD [ypos], STARTY_P2
- 304     mov     DWORD [NTx], START_NT_X_P2
- 305     mov     DWORD [NTy], START_NT_Y_P2
- 306     mov     DWORD [TDEx], START_TDE_X_P2
- 307     mov     DWORD [TDEy], START_TDE_Y_P2
- 308     mov     DWORD [BDEx], START_BDE_X_P2
- 309     mov     DWORD [BDEy], START_BDE_Y_P2
- 310     mov     DWORD [LBx], START_LB_X_P2
- 311     mov     DWORD [LBy], START_LB_Y_P2
- 312     mov     DWORD [DBx], START_DB_X_P2
- 313     mov     DWORD [DBy], START_DB_Y_P2
- 314     mov     DWORD [xmin], XMIN_P2
- 315
- 316     positions_set:
- 317     ;waits for user input to hike the ball and start loop
- 318         ; draw the game board
- 319         call    render
- 320
- 321         push    SNAP
- 322         call    usleep
- 323         add     esp, 4
- 324
- 325         ; get an action from the user
- 326         pre_snap_loop:
- 327         call    nonblocking_getchar
- 328         cmp     eax, -1
- 329         je      pre_snap_loop_end
- 330             jmp     pre_snap_loop
- 331         pre_snap_loop_end:
- 332         call    render
- 333         call    getchar
- 334         mov     edx, eax
- 335         mov     DWORD [distance_ran], -2
- 336         jmp     hike
- 337
- 338     ; the game happens in this loop
- 339     ; the steps are...
- 340     ;   1. render (draw) the current board
- 341     ;   2. get a character from the user
- 342     ;   3. store current xpos,ypos in esi,edi
- 343     ;   4. update xpos,ypos based on character from user
- 344     ;   5. check what's in the buffer (board) at new xpos,ypos
- 345     ;   6. if it's a wall, reset xpos,ypos to saved esi,edi
- 346     ;   7. otherwise, just continue! (xpos,ypos are ok)
- 347     game_loop:
- 348
- 349         dec     DWORD [timer]
- 350         cmp     DWORD [timer], 1200
- 351         jle     clock_at_zeros
- 352         mov     eax, DWORD [timer]
- 353         sub     eax, 1200
- 354         cdq
- 355         mov     ecx, 20
- 356         div     ecx
- 357         cdq
- 358         mov     ecx, 60
- 359         div     ecx
- 360         mov     DWORD [minutes], eax
- 361         mov     eax, edx
- 362         cdq
- 363         mov     ecx, 10
- 364         div     ecx
- 365         mov     DWORD [sec_tens], eax
- 366         mov     DWORD [sec_ones], edx
- 367         jmp     refresh_rate
- 368         clock_at_zeros:
- 369         mov     DWORD [minutes], 0
- 370         mov     DWORD [sec_tens], 0
- 371         mov     DWORD [sec_ones], 0
- 372
- 373         ; slow down refresh rate to set rate up top
- 374         refresh_rate:
- 375         push    TICK
- 376         call    usleep
- 377         add     esp, 4
- 378
- 379         mov     eax, DWORD [difficulty]
- 380         cmp     eax, 1
- 381         jne     hard_mode
- 382             mov     ebx, 40
- 383             jmp     run_timer
- 384         hard_mode:
- 385             mov     ebx, 20
- 386         run_timer:
- 387         mov     eax, DWORD [timer]
- 388         cdq
- 389         idiv    ebx
- 390         cmp     edx, 0
- 391         jne     skip_move
- 392             cmp     DWORD [player], 2
- 393             je      oppo_2_move
- 394             call    opponent_1_move
- 395             jmp     skip_move
- 396             oppo_2_move:
- 397             call    opponent_2_move
- 398
- 399         skip_move:
- 400
- 401         ; draw the game board
- 402         call    render
- 403
- 404         ; continue to refresh until tackled
- 405         call    nonblocking_getchar
- 406
- 406
- 407         ; al = -1
- 408         ; al = char
- 409         cmp     al, -1
- 410         je      check_tackle
- 411
- 412         hike:
- 413
- 414         ; store the current position
- 415         ; we will test if the new position is legal
- 416         ; if not, we will restore these
- 417         mov     esi, [xpos]
- 418         mov     edi, [ypos]
- 419
- 420         ; choose what to do
- 421
- 422         cmp     eax, EXITCHAR
- 423         je      game_loop_end
- 424         cmp     eax, UPCHAR
- 425         je      move_up
- 426         cmp     eax, LEFTCHAR
- 427         je      move_left
- 428         cmp     eax, DOWNCHAR
- 429         je      move_down
- 430         cmp     eax, RIGHTCHAR
- 431         je      move_right
- 432         cmp     eax, KICKCHAR
- 433         je      kick
- 434         cmp     eax, GIVEUPCHAR
- 435         je      game_loop_timer_zero
- 436         jmp     input_end           ; or just do nothing
- 437
- 438         ; move the player according to the input character
- 439         move_up:
- 440             dec     DWORD [ypos]
- 441             dec     DWORD [ypos]
- 442             dec     DWORD [ypos]
- 443             jmp     input_end
- 444         move_left:
- 445             dec     DWORD [xpos]
- 446             dec     DWORD [xpos]
- 447             dec     DWORD [xpos]
- 448             dec     DWORD [xpos]
- 449             dec     DWORD [xpos]
- 450             dec     DWORD [xpos]
- 451             cmp     DWORD [player], 2
- 452             je      player2_distance_decrease
- 453                 inc     DWORD [distance_ran]
- 454                 jmp     input_end
- 455             player2_distance_decrease:
- 456             dec     DWORD [distance_ran]
- 457             jmp     input_end
- 458         move_down:
- 459             inc     DWORD [ypos]
- 460             inc     DWORD [ypos]
- 461             inc     DWORD [ypos]
- 462             jmp     input_end
- 463         move_right:
- 464             inc     DWORD [xpos]
- 465             inc     DWORD [xpos]
- 466             inc     DWORD [xpos]
- 467             inc     DWORD [xpos]
- 468             inc     DWORD [xpos]
- 469             inc     DWORD [xpos]
- 470             cmp     DWORD [player], 2
- 471             je      player2_distance_increase
- 472                 dec     DWORD [distance_ran]
- 473                 jmp     input_end
- 474             player2_distance_increase:
- 475             inc     DWORD [distance_ran]
- 476             jmp     input_end
- 477         input_end:
- 478
- 479         ; wrap around after reaching endzone
- 480         cmp     DWORD [player], 2
- 481         je      player_2_wrap_check
- 482
- 483
- 484         mov     eax, DWORD [xpos]
- 485         mov     ecx, DWORD [xmin]
- 486         cmp     eax, ecx
- 487         jge     check_wall
- 488             mov     DWORD [xpos], STARTX
- 489             jmp     valid_move
- 490
- 491         player_2_wrap_check:
- 492         mov     eax, DWORD [xpos]
- 493         mov     ecx, DWORD [xmin]
- 494         cmp     eax, ecx
- 495         jle     check_wall
- 496             mov     DWORD [xpos], STARTX_P2
- 497             jmp     valid_move
- 498
- 499         ; (W * y) + x = pos
- 500
- 501         ; compare the current position to the wall character
- 502         check_wall:
- 503         mov     eax, WIDTH
- 504         mul     DWORD [ypos]
- 505         add     eax, [xpos]
- 506         lea     eax, [board + eax]
- 507         cmp     BYTE [eax], WALL_CHAR
- 508         jne     valid_move
- 509
- 510             ; opps, that was an invalid move, reset
- 511             invalid_move:
- 512             mov     DWORD [xpos], esi
- 513             mov     DWORD [ypos], edi
- 514
- 515         valid_move:
- 516
- 517         ; determine if player is tackled
- 518         check_tackle:
- 519         mov     eax, DWORD [xpos]
- 520         mov     ebx, DWORD [ypos]
- 521
- 522         ; check Nose Tackle
- 523         mov     ecx, DWORD [NTx]
- 524         mov     edx, DWORD [NTy]
- 525         cmp     eax, ecx
- 526         jne     check_tackle_TDE
- 527         cmp     ebx, edx
- 528         jne     check_tackle_TDE
- 529         jmp     player_tackled
- 530
- 531         ; check Top Defensive End
- 532         check_tackle_TDE:
- 533         mov     ecx, DWORD [TDEx]
- 534         mov     edx, DWORD [TDEy]
- 535         cmp     eax, ecx
- 536         jne     check_tackle_BDE
- 537         cmp     ebx, edx
- 538         jne     check_tackle_BDE
- 539         jmp     player_tackled
- 540
- 541         ; check Bottom Defensive End
- 542         check_tackle_BDE:
- 543         mov     ecx, DWORD [BDEx]
- 544         mov     edx, DWORD [BDEy]
- 545         cmp     eax, ecx
- 546         jne     check_tackle_LB
- 547         cmp     ebx, edx
- 548         jne     check_tackle_LB
- 549         jmp     player_tackled
- 550
- 551         ; check Line Backer
- 552         check_tackle_LB:
- 553         mov     ecx, DWORD [LBx]
- 554         mov     edx, DWORD [LBy]
- 555         cmp     eax, ecx
- 556         jne     check_tackle_DB
- 557         cmp     ebx, edx
- 558         jne     check_tackle_DB
- 559         jmp     player_tackled
- 560
- 561         ; check Defensive Back
- 562         check_tackle_DB:
- 563         mov     ecx, DWORD [DBx]
- 564         mov     edx, DWORD [DBy]
- 565         cmp     eax, ecx
- 566         jne     keep_running
- 567         cmp     ebx, edx
- 568         jne     keep_running
- 569         jmp     player_tackled
- 570
- 571     keep_running:
- 572     mov     eax, DWORD [distance_ran]
- 573     cmp     DWORD [score_distance], eax
- 574     jle     player_scored_TD
- 575     jmp     game_loop
- 576
- 577     player_tackled:
- 578     mov     eax, DWORD [distance_ran]
- 579     sub     DWORD [score_distance], eax
- 580     cmp     DWORD [first_down_distance], eax
- 581     jle     first_down
- 582         inc     DWORD [down]
- 583         cmp     DWORD [down], 5
- 584         jl      keep_possession
- 585             jmp     change_possession
- 586
- 587         keep_possession:
- 588         sub     DWORD [first_down_distance], eax
- 589         jmp     ball_is_on
- 590
- 591     first_down:
- 592     mov     DWORD [down], 1
- 593     cmp     DWORD [score_distance], 10
- 594     jge     first_and_10
- 595         mov     eax, DWORD [score_distance]
- 596         mov     DWORD [first_down_distance], eax
- 597         jmp     ball_is_on
- 598     first_and_10:
- 599     mov     DWORD [first_down_distance], 10
- 600     jmp     ball_is_on
- 601
- 602     ball_is_on:
- 603     cmp     DWORD [score_distance], 50
- 604     jle     less_than_fifty
- 605         mov     eax, DWORD [score_distance]
- 606         sub     eax, 50
- 607         mov     ebx, 50
- 608         sub     ebx, eax
- 609         mov     DWORD [ball_on], ebx
- 610         jmp     restart_game_loop
- 611
- 612         less_than_fifty:
- 613         mov     eax, DWORD [score_distance]
- 614         mov     DWORD[ball_on], eax
- 615         jmp     restart_game_loop
- 616
- 617     kick:
- 618     cmp     DWORD [score_distance], 50
- 619     jle     player_scored_FG
- 620         jmp     change_possession
- 621
- 622     player_scored_FG:
- 623     cmp     DWORD [player], 1
- 624     jne     player_2_FG
- 625         add     DWORD [player1_score], 3
- 626         jmp     change_possession
- 627     player_2_FG:
- 628     add     DWORD [player2_score], 3
- 629     jmp     change_possession
- 630
- 631     player_scored_TD:
- 632     cmp     DWORD [player], 1
- 633     jne     player_2_TD
- 634         add     DWORD [player1_score], 7
- 635         jmp     change_possession
- 636     player_2_TD:
- 637     add     DWORD [player2_score], 7
- 638     jmp     change_possession
- 639
- 640     change_possession:
- 641     cmp     DWORD [player], 1
- 642     je      player2_possession
- 643         mov     DWORD [player], 2
- 644         jmp     player1_possession
- 645
- 646     player1_possession:
- 647     mov     DWORD [player], 1
- 648     mov     DWORD [score_distance], 80
- 649     mov     DWORD [down], 1
- 650     mov     DWORD [first_down_distance], 10
- 651     mov     DWORD [ball_on], 20
- 652     jmp     restart_game_loop
- 653
- 654     player2_possession:
- 655     cmp     DWORD [num_players], 1
- 656     jne     cont_player2_possession
- 657         jmp     computer_possession
- 658     cont_player2_possession:
- 659     mov     DWORD [player], 2
- 660     mov     DWORD [score_distance], 80
- 661     mov     DWORD [down], 1
- 662     mov     DWORD [first_down_distance], 10
- 663     mov     DWORD [ball_on], 20
- 664     jmp     restart_game_loop
- 665
- 666     computer_possession:
- 667     mov     DWORD [player], 2
- 668     call    rand
- 669     cdq
- 670     mov     ebx, 10
- 671     idiv    ebx
- 672
- 673     cmp     edx, 2
- 674     jle     player_2_TD
- 675     cmp     edx, 7
- 676     jle     player_2_FG
- 677     jmp     player1_possession
- 678
- 679     game_loop_timer_zero:
- 680     mov     eax, DWORD [player1_score]
- 681     cmp     DWORD [player2_score], eax
- 682     je      tie
- 683     cmp     DWORD [player2_score], eax
- 684     jl      player_1_wins
- 685         mov     DWORD [winner], 2
- 686         jmp     end_game
- 687
- 688     player_1_wins:
- 689     mov     DWORD [winner], 1
- 690     jmp     end_game
- 691
- 692     tie:
- 693     mov     DWORD [winner], ' '
- 694     jmp     end_game
- 695
- 696     end_game:
- 697     mov     DWORD [timer], 0
- 698     call    end_screen
- 699     call    render
- 700
- 701     game_loop_end:
- 702
- 703     ; restore old terminal functionality
- 704     call raw_mode_off
- 705
- 706     ;***************CODE ENDS HERE*****************************
- 707     popa
- 708     mov     eax, 0
- 709     leave
- 710     ret
- 711
- 712 ; === FUNCTION ===
- 713 raw_mode_on:
- 714
- 715     push    ebp
- 716     mov     ebp, esp
- 717
- 718     push    raw_mode_on_cmd
- 719     call    system
- 720     add     esp, 4
- 721
- 722     mov     esp, ebp
- 723     pop     ebp
- 724     ret
- 725
- 726 ; === FUNCTION ===
- 727 raw_mode_off:
- 728
- 729     push    ebp
- 730     mov     ebp, esp
- 731
- 732     push    raw_mode_off_cmd
- 733     call    system
- 734     add     esp, 4
- 735
- 736     mov     esp, ebp
- 737     pop     ebp
- 738     ret
- 739
- 740 ; === FUNCTION ===
- 741 init_board:
- 742
- 743     push    ebp
- 744     mov     ebp, esp
- 745
- 746     ; FILE* and loop counter
- 747     ; ebp-4, ebp-8
- 748     sub     esp, 8
- 749
- 750     ; open the file
- 751     push    mode_r
- 752     push    board_file
- 753     call    fopen
- 754     add     esp, 8
- 755     mov     DWORD [ebp-4], eax
- 756
- 757     ; read the file data into the global buffer
- 758     ; line-by-line so we can ignore the newline characters
- 759     mov     DWORD [ebp-8], 0
- 760     read_loop:
- 761     cmp     DWORD [ebp-8], HEIGHT
- 762     je      read_loop_end
- 763
- 764         ; find the offset (WIDTH * counter)
- 765         mov     eax, WIDTH
- 766         mul     DWORD [ebp-8]
- 767         lea     ebx, [board + eax]
- 768
- 769         ; read the bytes into the buffer
- 770         push    DWORD [ebp-4]
- 771         push    WIDTH
- 772         push    1
- 773         push    ebx
- 774         call    fread
- 775         add     esp, 16
- 776
- 777         ; slurp up the newline
- 778         push    DWORD [ebp-4]
- 779         call    fgetc
- 780         add     esp, 4
- 781
- 782     inc     DWORD [ebp-8]
- 783     jmp     read_loop
- 784     read_loop_end:
- 785
- 786     ; close the open file handle
- 787     push    DWORD [ebp-4]
- 788     call    fclose
- 789     add     esp, 4
- 790
- 791     mov     esp, ebp
- 792     pop     ebp
- 793     ret
- 794
- 795 ; === FUNCTION ===
- 796 end_screen:
- 797
- 798     push    ebp
- 799     mov     ebp, esp
- 800
- 801     ; FILE* and loop counter
- 802     ; ebp-4, ebp-8
- 803     sub     esp, 8
- 804
- 805     ; open the file
- 806     push    mode_r
- 807     push    end_screen_file
- 808     call    fopen
- 809     add     esp, 8
- 810     mov     DWORD [ebp-4], eax
- 811
- 812     ; read the file data into the global buffer
- 813     ; line-by-line so we can ignore the newline characters
- 814     mov     DWORD [ebp-8], 0
- 815     read_loop_end_screen:
- 816     cmp     DWORD [ebp-8], HEIGHT
- 817     je      read_loop_end_screen_end
- 818
- 819         ; find the offset (WIDTH * counter)
- 820         mov     eax, WIDTH
- 821         mul     DWORD [ebp-8]
- 822         lea     ebx, [board + eax]
- 823
- 824         ; read the bytes into the buffer
- 825         push    DWORD [ebp-4]
- 826         push    WIDTH
- 827         push    1
- 828         push    ebx
- 829         call    fread
- 830         add     esp, 16
- 831
- 832         ; slurp up the newline
- 833         push    DWORD [ebp-4]
- 834         call    fgetc
- 835         add     esp, 4
- 836
- 837     inc     DWORD [ebp-8]
- 838     jmp     read_loop_end_screen
- 839     read_loop_end_screen_end:
- 840
- 841     ; close the open file handle
- 842     push    DWORD [ebp-4]
- 843     call    fclose
- 844     add     esp, 4
- 845
- 846     mov     esp, ebp
- 847     pop     ebp
- 848     ret
- 849
- 850 ; === FUNCTION ===
- 851 render:
- 852
- 853     push    ebp
- 854     mov     ebp, esp
- 855
- 856     ; two ints, for two loop counters
- 857     ; ebp-4, ebp-8
- 858     sub     esp, 8
- 859
- 860     ; clear the screen
- 861     push    clear_screen_cmd
- 862     call    system
- 863     add     esp, 4
- 864
- 865     ; print the help information
- 866     push    help_str
- 867     call    printf
- 868     add     esp, 4
- 869
- 870     push    DWORD [player]
- 871     push    DWORD [ball_on]
- 872     push    DWORD [first_down_distance]
- 873     push    DWORD [down]
- 874     push    DWORD [player2_score]
- 875     push    DWORD [player1_score]
- 876     push    DWORD [sec_ones]
- 877     push    DWORD [sec_tens]
- 878     push    DWORD [minutes]
- 879     push    scoreboard_fmt
- 880     call    printf
- 881     add     esp, 8
- 882
- 883     ; outside loop by height
- 884     ; i.e. for(c=0; c<height; c++)
- 885     mov     DWORD [ebp-4], 0
- 886     y_loop_start:
- 887     cmp     DWORD [ebp-4], HEIGHT
- 888     je      y_loop_end
- 889
- 890         ; inside loop by width
- 891         ; i.e. for(c=0; c<width; c++)
- 892         mov     DWORD [ebp-8], 0
- 893         x_loop_start:
- 894         cmp     DWORD [ebp-8], WIDTH
- 895         je      x_loop_end
- 896
- 897         cmp     DWORD [timer], 0
- 898         jne     check_players
- 899             cmp     DWORD [ebp-4], 8
- 900             jne     print_board
- 901             cmp     DWORD [ebp-8], 48
- 902             jne     print_board
- 903                 jmp     print_winner
- 904
- 905             ; check for player (xpos,ypos)=(x,y)
- 906             check_players:
- 907             mov     eax, [xpos]
- 908             mov     ecx, DWORD [ebp-8]
- 909             cmp     eax, ecx
- 910             je      check_ypos
- 911             dec     ecx
- 912             cmp     eax, ecx
- 913             je      check_ypos
- 914             dec     ecx
- 915             cmp     eax, ecx
- 916             je      check_ypos
- 917             jmp     check_NTx
- 918
- 919             check_ypos:
- 920             mov     eax, [ypos]
- 921             mov     ecx, DWORD [ebp-4]
- 922             cmp     eax, ecx
- 923             je      print_player
- 924             dec     ecx
- 925             cmp     eax, ecx
- 926             je      print_player
- 927             jmp     check_NTx
- 928
- 929             ; check for Nose Tackle (xpos,ypos)=(x,y)
- 930             check_NTx:
- 931             mov     eax, [NTx]
- 932             mov     ecx, DWORD [ebp-8]
- 933             cmp     eax, ecx
- 934             je      check_NTy
- 935             dec     ecx
- 936             cmp     eax, ecx
- 937             je      check_NTy
- 938             dec     ecx
- 939             cmp     eax, ecx
- 940             je      check_NTy
- 941             jmp     check_TDEx
- 942
- 943             check_NTy:
- 944             mov     eax, [NTy]
- 945             mov     ecx, DWORD [ebp-4]
- 946             cmp     eax, ecx
- 947             je      print_opponent
- 948             dec     ecx
- 949             cmp     eax, ecx
- 950             je      print_opponent
- 951             jmp     check_TDEx
- 952
- 953             ; check for Top Defensive End (xpos,ypos)=(x,y)
- 954             check_TDEx:
- 955             mov     eax, [TDEx]
- 956             mov     ecx, DWORD [ebp-8]
- 957             cmp     eax, ecx
- 958             je      check_TDEy
- 959             dec     ecx
- 960             cmp     eax, ecx
- 961             je      check_TDEy
- 962             dec     ecx
- 963             cmp     eax, ecx
- 964             je      check_TDEy
- 965             jmp     check_BDEx
- 966
- 967             check_TDEy:
- 968             mov     eax, [TDEy]
- 969             mov     ecx, DWORD [ebp-4]
- 970             cmp     eax, ecx
- 971             je      print_opponent
- 972             dec     ecx
- 973             cmp     eax, ecx
- 974             je      print_opponent
- 975             jmp     check_BDEx
- 976
- 977             ; check for Top Defensive End (xpos,ypos)=(x,y)
- 978             check_BDEx:
- 979             mov     eax, [BDEx]
- 980             mov     ecx, DWORD [ebp-8]
- 981             cmp     eax, ecx
- 982             je      check_BDEy
- 983             dec     ecx
- 984             cmp     eax, ecx
- 985             je      check_BDEy
- 986             dec     ecx
- 987             cmp     eax, ecx
- 988             je      check_BDEy
- 989             jmp     check_LBx
- 990
- 991             check_BDEy:
- 992             mov     eax, [BDEy]
- 993             mov     ecx, DWORD [ebp-4]
- 994             cmp     eax, ecx
- 995             je      print_opponent
- 996             dec     ecx
- 997             cmp     eax, ecx
- 998             je      print_opponent
- 999             jmp     check_LBx
-1000
-1001             ; check for Top Defensive End (xpos,ypos)=(x,y)
-1002             check_LBx:
-1003             mov     eax, [LBx]
-1004             mov     ecx, DWORD [ebp-8]
-1005             cmp     eax, ecx
-1006             je      check_LBy
-1007             dec     ecx
-1008             cmp     eax, ecx
-1009             je      check_LBy
-1010             dec     ecx
-1011             cmp     eax, ecx
-1012             je      check_LBy
-1013             jmp     check_DBx
-1014
-1015             check_LBy:
-1016             mov     eax, [LBy]
-1017             mov     ecx, DWORD [ebp-4]
-1018             cmp     eax, ecx
-1019             je      print_opponent
-1020             dec     ecx
-1021             cmp     eax, ecx
-1022             je      print_opponent
-1023             jmp     check_DBx
-1024
-1025             ; check for Bottom Defensive End (xpos,ypos)=(x,y)
-1026             check_DBx:
-1027             mov     eax, [DBx]
-1028             mov     ecx, DWORD [ebp-8]
-1029             cmp     eax, ecx
-1030             je      check_DBy
-1031             dec     ecx
-1032             cmp     eax, ecx
-1033             je      check_DBy
-1034             dec     ecx
-1035             cmp     eax, ecx
-1036             je      check_DBy
-1037             jmp     print_board
-1038
-1039             check_DBy:
-1040             mov     eax, [DBy]
-1041             mov     ecx, DWORD [ebp-4]
-1042             cmp     eax, ecx
-1043             je      print_opponent
-1044             dec     ecx
-1045             cmp     eax, ecx
-1046             je      print_opponent
-1047             jmp     print_board
-1048
-1049                 ; if both were equal, print the player
-1050             print_player:
-1051                 push    PLAYER_CHAR
-1052                 push    color_magenta
-1053                 call    printf
-1054                 add     esp, 4
-1055                 jmp     print_end
-1056             print_opponent:
-1057                 push    OPPONENT_CHAR
-1058                 push    color_red
-1059                 call    printf
-1060                 add     esp, 4
-1061                 jmp     print_end
-1062             print_winner:
-1063                 cmp     DWORD [winner], 1
-1064                 jne     print_player_2
-1065                     push    PLAYER_1_CHAR
-1066                     jmp     print_end
-1067             print_player_2:
-1068                 cmp     DWORD [winner], 2
-1069                 jne     print_board
-1070                     push    PLAYER_2_CHAR
-1071                     jmp     print_end
-1072             print_board:
-1073                 ; otherwise print whatever's in the buffer
-1074                 mov     eax, [ebp-4]
-1075                 mov     ebx, WIDTH
-1076                 mul     ebx
-1077                 add     eax, [ebp-8]
-1078                 mov     ebx, 0
-1079                 mov     bl, BYTE [board + eax]
-1080
-1081                 cmp     bl, '#'
-1082                 jne     not_pound
-1083                     push    color_green
-1084                     call    printf
-1085                     add     esp, 4
-1086                 not_pound:
-1087                 cmp     bl, '@'
-1088                 jne     not_at
-1089                     push    color_blue
-1090                     call    printf
-1091                     add     esp, 4
-1092                 not_at:
-1093                 cmp     bl, '_'
-1094                 jne     not_underscore
-1095                     push    color_yellow
-1096                     call    printf
-1097                     add     esp, 4
-1098                 not_underscore:
-1099                 cmp     bl, '|'
-1100                 jne     not_bar
-1101                     push    color_yellow
-1102                     call    printf
-1103                     add     esp, 4
-1104                 not_bar:
-1105
-1106                 push    ebx
-1107             print_end:
-1108             call    putchar
-1109             add     esp, 4
-1110             push    color_default
-1111             call    printf
-1112             add     esp, 4
-1113
-1114         inc     DWORD [ebp-8]
-1115         jmp     x_loop_start
-1116         x_loop_end:
-1117
-1118         ; write a carriage return (necessary when in raw mode)
-1119         push    0x0d
-1120         call    putchar
-1121         add     esp, 4
-1122
-1123         ; write a newline
-1124         push    0x0a
-1125         call    putchar
-1126         add     esp, 4
-1127
-1128     inc     DWORD [ebp-4]
-1129     jmp     y_loop_start
-1130     y_loop_end:
-1131
-1132     mov     esp, ebp
-1133     pop     ebp
-1134     ret
-1135
-1136 ; === FUNCTION ===
-1137 nonblocking_getchar:
-1138
-1139 ; returns -1 on no-data
-1140 ; returns char on succes
-1141
-1142 ; magic values
-1143 %define F_GETFL 3
-1144 %define F_SETFL 4
-1145 %define O_NONBLOCK 2048
-1146 %define STDIN 0
-1147
-1148         push    ebp
-1149         mov     ebp, esp
-1150
-1151         ; single int used to hold flags
-1152         ; single character (aligned to 4 bytes) return
-1153         sub     esp, 8
-1154
-1155         ; get current stdin flags
-1156         ; flags = fcntl(stdin, F_GETFL, 0)
-1157         push    0
-1158         push    F_GETFL
-1159         push    STDIN
-1160         call    fcntl
-1161         add     esp, 12
-1162         mov     DWORD [ebp-4], eax
-1163
-1164         ; set non-blocking mode on stdin
-1165         ; fcntl(stdin, F_SETFL, flags | O_NONBLOCK)
-1166         or      DWORD [ebp-4], O_NONBLOCK
-1167         push    DWORD [ebp-4]
-1168         push    F_SETFL
-1169         push    STDIN
-1170         call    fcntl
-1171         add     esp, 12
-1172
-1173         call    getchar
-1174         mov     DWORD [ebp-8], eax
-1175
-1176         ; restore blocking mode
-1177         ; fcntl(stdin, F_SETFL, flags ^ O_NONBLOCK
-1178         xor     DWORD [ebp-4], O_NONBLOCK
-1179         push    DWORD [ebp-4]
-1180         push    F_SETFL
-1181         push    STDIN
-1182         call    fcntl
-1183         add     esp, 12
-1184
-1185         mov     eax, DWORD [ebp-8]
-1186
-1187         mov     esp, ebp
-1188         pop     ebp
-1189         ret
-1190
-1191 ; === FUNCTION +++
-1192 opponent_1_move:
-1193
-1194 ; moves opponent with random numbers
-1195 ; only moves certain opponants depending on where the player is
-1196     push    ebp
-1197     mov     ebp, esp
-1198
-1199
-1200     cmp     DWORD [xpos], 55
-1201     jge     move_line
-1202     jmp     move_backers
-1203
-1204     move_line:
-1205     call    rand
-1206     cdq
-1207     mov     ebx, 6
-1208     idiv    ebx
-1209
-1210     cmp     edx, 0
-1211     je      move_TDE
-1212     cmp     edx, 5
-1213     je      move_BDE
-1214     jmp     move_NT
-1215
-1216     move_backers:
-1217     call    rand
-1218     cdq
-1219     mov     ebx, 10
-1220     idiv    ebx
-1221     cmp     edx, 5
-1222     jge     end_move
-1223
-1224     cmp     DWORD [xpos], 37
-1225     jl      move_DB
-1226     jmp     move_LB
-1227
-1228     move_NT:
-1229     mov     eax, DWORD [ypos]
-1230     cmp     DWORD [NTy], eax
-1231     jl      move_NT_down
-1232     cmp     DWORD [NTy], eax
-1233     jg      move_NT_up
-1234     cmp     DWORD [NTy], eax
-1235     je      move_NT_forward
-1236
-1237         move_NT_down:
-1238             mov     eax, DWORD [BDEx]
-1239             cmp     DWORD [NTx], eax
-1240             je      move_NT_forward
-1241                 add     DWORD [NTy], 3
-1242                 jmp     end_move
-1243
-1244         move_NT_up:
-1245             mov     eax, DWORD [TDEx]
-1246             cmp     DWORD [NTx], eax
-1247             je      move_NT_forward
-1248                 sub     DWORD [NTy], 3
-1249                 jmp     end_move
-1250
-1251         move_NT_forward:
-1252             mov     eax, DWORD [BDEy]
-1253             cmp     DWORD [NTy], eax
-1254             je      end_move
-1255             mov     eax, DWORD [TDEy]
-1256             cmp     DWORD [NTy], eax
-1257             je      end_move
-1258             cmp     DWORD [BDEx], 67
-1259             je      end_move
-1260                 add     DWORD [NTx], 6
-1261                 jmp     end_move
-1262
-1263     move_TDE:
-1264     mov     eax, DWORD [NTy]
-1265     cmp     DWORD [TDEy], eax
-1266     jge     move_TDE_up
-1267     cmp     DWORD [TDEy], eax
-1268     jl      move_TDE_down
-1269
-1270         move_TDE_up:
-1271             cmp     DWORD [TDEy], 3
-1272             je      move_TDE_down
-1273                 sub     DWORD [TDEy], 3
-1274                 jmp     end_move
-1275
-1276         move_TDE_down:
-1277             cmp     DWORD [TDEy], 6
-1278             je      move_TDE_forward
-1279             mov     edi, DWORD [BDEy]
-1280             sub     edi, 3
-1281             cmp     DWORD [TDEy], edi
-1282             je      move_TDE_forward
-1283             mov     eax, DWORD [NTx]
-1284             cmp     DWORD [TDEx], eax
-1285             je      move_TDE_forward
-1286                 add     DWORD [TDEy], 3
-1287                 jmp     end_move
-1288
-1289         move_TDE_forward:
-1290             mov     eax, DWORD [NTy]
-1291             cmp     DWORD [TDEy], eax
-1292             je      end_move
-1293             cmp     DWORD [BDEx], 67
-1294             je      end_move
-1295                 add     DWORD [BDEx], 6
-1296                 jmp     end_move
-1297
-1298     move_BDE:
-1299     mov     eax, DWORD [NTy]
-1300     cmp     DWORD [BDEy], eax
-1301     jge     move_BDE_down
-1302     cmp     DWORD [BDEy], eax
-1303     jl      move_BDE_up
-1304
-1305         move_BDE_down:
-1306             cmp     DWORD [BDEy], 9
-1307             je      move_BDE_forward
-1308                 add     DWORD [BDEy], 3
-1309                 jmp     end_move
-1310
-1311         move_BDE_up:
-1312             cmp     DWORD [BDEy], 6
-1313             je      move_BDE_forward
-1314             mov     edi, DWORD [TDEy]
-1315             add     edi, 3
-1316             cmp     DWORD [BDEy], edi
-1317             je      move_BDE_forward
-1318             mov     eax, DWORD [NTx]
-1319             cmp     DWORD [BDEx], eax
-1320             je      move_BDE_forward
-1321                 sub     DWORD [BDEy], 3
-1322                 jmp     end_move
-1323
-1324         move_BDE_forward:
-1325             mov     eax, DWORD [NTy]
-1326             cmp     DWORD [BDEy], eax
-1327             je      end_move
-1328             cmp     DWORD [BDEx], 67
-1329             je      end_move
-1330                 add     DWORD [BDEx], 6
-1331                 jmp     end_move
-1332
-1333     move_LB:
-1334     mov     eax, DWORD [ypos]
-1335     cmp     DWORD [LBy], eax
-1336     jg      move_LB_up
-1337     cmp     DWORD [LBy], eax
-1338     jl      move_LB_down
-1339     jmp     end_move
-1340
-1341         move_LB_up:
-1342             sub     DWORD [LBy], 3
-1343             jmp     end_move
-1344
-1345         move_LB_down:
-1346             add     DWORD [LBy], 3
-1347             jmp     end_move
-1348
-1349     move_DB:
-1350     mov     eax, DWORD [ypos]
-1351     cmp     DWORD [DBy], eax
-1352     jg      move_DB_up
-1353     cmp     DWORD [DBy], eax
-1354     jl      move_DB_down
-1355     jmp     end_move
-1356
-1357         move_DB_up:
-1358             sub     DWORD [DBy], 3
-1359             jmp     end_move
-1360
-1361         move_DB_down:
-1362             add     DWORD [DBy], 3
-1363             jmp     end_move
-1364
-1365     end_move:
-1366     mov     esp, ebp
-1367     pop     ebp
-1368     ret
-1369
-1370 ; === FUNCTION +++
-1371 opponent_2_move:
-1372
-1373 ; moves opponent with random numbers
-1374 ; only moves certain opponants depending on where the player is
-1375     push    ebp
-1376     mov     ebp, esp
-1377
-1378
-1379     cmp     DWORD [xpos], 31
-1380     jle     move_line2
-1381     jmp     move_backers2
-1382
-1383     move_line2:
-1384     call    rand
-1385     cdq
-1386     mov     ebx, 6
-1387     idiv    ebx
-1388
-1389     cmp     edx, 0
-1390     je      move_TDE2
-1391     cmp     edx, 5
-1392     je      move_BDE2
-1393     jmp     move_NT2
-1394
-1395     move_backers2:
-1396     call    rand
-1397     cdq
-1398     mov     ebx, 10
-1399     idiv    ebx
-1400     cmp     edx, 5
-1401     jge     end_move
-1402
-1403     cmp     DWORD [xpos], 55
-1404     jge     move_DB2
-1405     jmp     move_LB2
-1406
-1407     move_NT2:
-1408     mov     eax, DWORD [ypos]
-1409     cmp     DWORD [NTy], eax
-1410     jl      move_NT_down2
-1411     cmp     DWORD [NTy], eax
-1412     jg      move_NT_up2
-1413     cmp     DWORD [NTy], eax
-1414     je      move_NT_forward2
-1415
-1416         move_NT_down2:
-1417             mov     eax, DWORD [BDEx]
-1418             cmp     DWORD [NTx], eax
-1419             je      move_NT_forward2
-1420                 add     DWORD [NTy], 3
-1421                 jmp     end_move2
-1422
-1423         move_NT_up2:
-1424             mov     eax, DWORD [TDEx]
-1425             cmp     DWORD [NTx], eax
-1426             je      move_NT_forward2
-1427                 sub     DWORD [NTy], 3
-1428                 jmp     end_move2
-1429
-1430         move_NT_forward2:
-1431             mov     eax, DWORD [BDEy]
-1432             cmp     DWORD [NTy], eax
-1433             je      end_move2
-1434             mov     eax, DWORD [TDEy]
-1435             cmp     DWORD [NTy], eax
-1436             je      end_move2
-1437             cmp     DWORD [BDEx], 67
-1438             je      end_move2
-1439                 sub     DWORD [NTx], 6
-1440                 jmp     end_move2
-1441
-1442     move_TDE2:
-1443     mov     eax, DWORD [NTy]
-1444     cmp     DWORD [TDEy], eax
-1445     jge     move_TDE_up2
-1446     cmp     DWORD [TDEy], eax
-1447     jl      move_TDE_down2
-1448
-1449         move_TDE_up2:
-1450             cmp     DWORD [TDEy], 3
-1451             je      move_TDE_down2
-1452                 sub     DWORD [TDEy], 3
-1453                 jmp     end_move2
-1454
-1455         move_TDE_down2:
-1456             cmp     DWORD [TDEy], 6
-1457             je      move_TDE_forward2
-1458             mov     edi, DWORD [BDEy]
-1459             sub     edi, 3
-1460             cmp     DWORD [TDEy], edi
-1461             je      move_TDE_forward2
-1462             mov     eax, DWORD [NTx]
-1463             cmp     DWORD [TDEx], eax
-1464             je      move_TDE_forward2
-1465                 add     DWORD [TDEy], 3
-1466                 jmp     end_move2
-1467
-1468         move_TDE_forward2:
-1469             mov     eax, DWORD [NTy]
-1470             cmp     DWORD [TDEy], eax
-1471             je      end_move2
-1472             cmp     DWORD [BDEx], 67
-1473             je      end_move2
-1474                 sub     DWORD [BDEx], 6
-1475                 jmp     end_move2
-1476
-1477     move_BDE2:
-1478     mov     eax, DWORD [NTy]
-1479     cmp     DWORD [BDEy], eax
-1480     jge     move_BDE_down2
-1481     cmp     DWORD [BDEy], eax
-1482     jl      move_BDE_up2
-1483
-1484         move_BDE_down2:
-1485             cmp     DWORD [BDEy], 9
-1486             je      move_BDE_forward2
-1487                 add     DWORD [BDEy], 3
-1488                 jmp     end_move2
-1489
-1490         move_BDE_up2:
-1491             cmp     DWORD [BDEy], 6
-1492             je      move_BDE_forward2
-1493             mov     edi, DWORD [TDEy]
-1494             add     edi, 3
-1495             cmp     DWORD [BDEy], edi
-1496             je      move_BDE_forward2
-1497             mov     eax, DWORD [NTx]
-1498             cmp     DWORD [BDEx], eax
-1499             je      move_BDE_forward2
-1500                 sub     DWORD [BDEy], 3
-1501                 jmp     end_move2
-1502
-1503         move_BDE_forward2:
-1504             mov     eax, DWORD [NTy]
-1505             cmp     DWORD [BDEy], eax
-1506             je      end_move2
-1507             cmp     DWORD [BDEx], 67
-1508             je      end_move2
-1509                 sub     DWORD [BDEx], 6
-1510                 jmp     end_move2
-1511
-1512     move_LB2:
-1513     mov     eax, DWORD [ypos]
-1514     cmp     DWORD [LBy], eax
-1515     jg      move_LB_up2
-1516     cmp     DWORD [LBy], eax
-1517     jl      move_LB_down2
-1518     jmp     end_move2
-1519
-1520         move_LB_up2:
-1521             sub     DWORD [LBy], 3
-1522             jmp     end_move2
-1523
-1524         move_LB_down2:
-1525             add     DWORD [LBy], 3
-1526             jmp     end_move2
-1527
-1528     move_DB2:
-1529     mov     eax, DWORD [ypos]
-1530     cmp     DWORD [DBy], eax
-1531     jg      move_DB_up2
-1532     cmp     DWORD [DBy], eax
-1533     jl      move_DB_down2
-1534     jmp     end_move2
-1535
-1536         move_DB_up2:
-1537             sub     DWORD [DBy], 3
-1538             jmp     end_move2
-1539
-1540         move_DB_down2:
-1541             add     DWORD [DBy], 3
-1542             jmp     end_move2
-1543
-1544     end_move2:
-1545     mov     esp, ebp
-1546     pop     ebp
-1547     ret
-1548
-                                                                    
+%include "/usr/local/share/csc314/asm_io.inc"
+
+; how frequently we check for input
+; 1,000,000 - 1 second
+%define TICK 50000      ; 20 hertz refresh rate
+%define SNAP 1000000    ;wait 1 second after tackled
+
+; the file that stores the initial state
+%define BOARD_FILE 'board.txt'
+%define END_SCREEN_FILE 'endscreen.txt'
+
+; how to represent everything
+%define WALL_CHAR '#'
+%define PLAYER_CHAR 'O'
+%define OPPONENT_CHAR 'X'
+%define PLAYER_1_CHAR '1'
+%define PLAYER_2_CHAR '2'
+
+; the size of the game screen in characters
+%define HEIGHT 16
+%define WIDTH 89
+
+; the player starting position.
+; top left is considered (0,0)
+; player 1
+%define STARTX 67
+%define STARTY 6
+%define START_NT_X 49
+%define START_NT_Y 6
+%define START_TDE_X 49
+%define START_TDE_Y 3
+%define START_BDE_X 49
+%define START_BDE_Y 9
+%define START_LB_X 37
+%define START_LB_Y 6
+%define START_DB_X 19
+%define START_DB_Y 6
+%define XMIN 18
+
+;player 2
+%define STARTX_P2 19
+%define STARTY_P2 6
+%define START_NT_X_P2 37
+%define START_NT_Y_P2 6
+%define START_TDE_X_P2 37
+%define START_TDE_Y_P2 3
+%define START_BDE_X_P2 37
+%define START_BDE_Y_P2 9
+%define START_LB_X_P2 49
+%define START_LB_Y_P2 6
+%define START_DB_X_P2 67
+%define START_DB_Y_P2 6
+%define XMIN_P2 67
+
+
+; these keys do things
+%define EXITCHAR 'x'
+%define UPCHAR 'w'
+%define LEFTCHAR 'a'
+%define DOWNCHAR 's'
+%define RIGHTCHAR 'd'
+%define KICKCHAR 'k'
+%define GIVEUPCHAR  'g'
+
+; colors
+%define COLOR_YELLOW 27,"[33m"
+%define COLOR_DEFAULT 27, "[0m"
+%define COLOR_BLUE 27, "[34m"
+%define COLOR_CYAN 27, "[36m"
+%define COLOR_GREEN 27, "[32m"
+%define COLOR_RED 27, "[31m"
+
+segment .data
+
+    ; used to fopen() the board file defined above
+    board_file          db BOARD_FILE,0
+    end_screen_file     db END_SCREEN_FILE,0
+
+    ; used to change the terminal mode
+    mode_r              db "r",0
+    raw_mode_on_cmd     db "stty raw -echo",0
+    raw_mode_off_cmd    db "stty -raw echo",0
+
+    ; called by system() to clear/refresh the screen
+    clear_screen_cmd    db "clear",0
+
+    ; things the program will print
+    help_str            db 13,10,COLOR_CYAN,"Controls: ", \
+                            UPCHAR,"=UP / ", \
+                            LEFTCHAR,"=LEFT / ", \
+                            DOWNCHAR,"=DOWN / ", \
+                            RIGHTCHAR,"=RIGHT",13,10, \
+                            KICKCHAR,"=KICK (> 50 to go PUNT < 50 to go FIELDGOAL) / ", \
+                            GIVEUPCHAR,"=GIVE UP / ", \
+                            EXITCHAR,"=EXIT", \
+                            COLOR_DEFAULT,13,10,10,0
+
+    intro_fmt           db "Welcome to Electronic Football!!",10,"Made by Steven Clark",10,"CSC 314 Fall 2020",10,10,"Press ENTER to Continue",0
+
+    num_players_fmt     db 13,"How many players (1 or 2)? ",0
+    difficulty_fmt      db 13,"What difficulty (e = easy, h = hard)? ",0
+
+    scoreboard_fmt      db "Timer     Player 1 Score     Player 2 Score     Down     To Go     Ball On     Player", \
+                            13,10,COLOR_YELLOW,"%2d:%d%d           %2d                 %2d            %d        %2d          %2d         %d", \
+                            COLOR_DEFAULT,13,10,10,0
+
+    color_magenta       db  27, "[95m",0
+    color_red           db  27, "[31m",0
+    color_blue          db  27, "[34m",0
+    color_yellow        db  27, "[33m",0
+    color_green         db  27, "[32m",0
+    color_default       db  27, "[0m",0
+
+segment .bss
+
+    ; this array stores the current rendered gameboard (HxW)
+    board   resb    (HEIGHT * WIDTH)
+
+    ; these variables store the current player position
+    xpos    resd    1
+    ypos    resd    1
+
+    ; these variables store the current opponent positions
+ 
+    NTx     resd    1
+    NTy     resd    1
+    TDEx    resd    1
+    TDEy    resd    1
+    BDEx    resd    1
+    BDEy    resd    1
+    LBx     resd    1
+    LBy     resd    1
+    DBx     resd    1
+    DBy     resd    1
+    xmin    resd    1
+
+    ; scoreboard variables
+
+    player          resd    1
+    timer           resd    1
+    minutes         resd    1
+    sec_tens        resd    1
+    sec_ones        resd    1
+    player1_score   resd    1
+    player2_score   resd    1
+    ball_on         resd    1
+    score_distance  resd    1
+    first_down_distance     resd    1
+    down            resd    1
+    distance_ran    resd    1
+    winner          resd    1
+    num_players     resd    1
+    difficulty      resd    1
+
+
+segment .text
+
+    global  asm_main
+    global  raw_mode_on
+    global  raw_mode_off
+    global  init_board
+    global  render
+
+    extern  system
+    extern  putchar
+    extern  getchar
+    extern  printf
+    extern  fopen
+    extern  fread
+    extern  fgetc
+    extern  fclose
+    extern  usleep
+    extern  fcntl
+
+    extern  time
+    extern  srand
+    extern  rand
+
+asm_main:
+    enter   0,0
+    pusha
+    ;***************CODE STARTS HERE***************************
+
+    ;srand ( time(NULL))
+    push    0
+    call    time
+    add     esp, 4
+
+    push    eax
+    call    srand
+    add     esp, 4
+
+    ; intro screen and set number of players and difficulty
+
+    push    clear_screen_cmd
+    call    system
+    add     esp, 4
+
+    push    intro_fmt
+    call    printf
+    add     esp, 4
+    call    getchar
+
+    ask_num_players:
+    push    clear_screen_cmd
+    call    system
+    add     esp, 4
+
+    push    num_players_fmt
+    call    printf
+    add     esp, 4
+
+    call    getchar
+    cmp     eax, '1'
+    jne     check_2_players
+        mov     DWORD [num_players], 1
+        jmp     ask_difficulty
+    check_2_players:
+    cmp     eax, '2'
+    jne     ask_num_players
+        mov     DWORD [num_players], 2
+
+    ask_difficulty:
+    push    clear_screen_cmd
+    call    system
+    add     esp, 4
+
+    push    difficulty_fmt
+    call    printf
+    add     esp, 4
+
+    call    getchar
+    cmp     eax, 'e'
+    jne     check_hard_difficulty
+        mov     DWORD [difficulty], 1
+        jmp     start_game
+    check_hard_difficulty:
+    cmp     eax, 'h'
+    jne     ask_difficulty
+        mov     DWORD [difficulty], 2
+
+    start_game:
+    ; put the terminal in raw mode so the game works nicely
+    call    raw_mode_on
+
+    ; read the game board file into the global variable
+    call    init_board
+
+    coin_flip:
+    call    rand
+    cdq
+    mov     ebx, 2
+    idiv    ebx
+    cmp     edx, 1
+    je      coin_flip_cont
+        mov     DWORD [player], 1
+        jmp     coin_flip_end
+    coin_flip_cont:
+    mov     DWORD [player], 2
+    coin_flip_end:
+
+    ; set scoreboard to starting values
+    mov     DWORD [timer], 13200
+    mov     DWORD [minutes], 10
+    mov     DWORD [sec_tens], 0
+    mov     DWORD [sec_ones], 0
+    mov     DWORD [player1_score], 0
+    mov     DWORD [player2_score], 0
+    mov     DWORD [score_distance], 80
+    mov     DWORD [down], 1
+    mov     DWORD [first_down_distance], 10
+    mov     DWORD [ball_on], 20
+
+    restart_game_loop:
+
+    dec     DWORD [timer]
+    cmp     DWORD [timer], 1200
+    jle     game_loop_timer_zero
+
+
+    ; set the player at the proper start position
+    cmp     DWORD [player], 2
+    je      player2_setup
+
+    mov     DWORD [xpos], STARTX
+    mov     DWORD [ypos], STARTY
+    mov     DWORD [NTx], START_NT_X
+    mov     DWORD [NTy], START_NT_Y
+    mov     DWORD [TDEx], START_TDE_X
+    mov     DWORD [TDEy], START_TDE_Y
+    mov     DWORD [BDEx], START_BDE_X
+    mov     DWORD [BDEy], START_BDE_Y
+    mov     DWORD [LBx], START_LB_X
+    mov     DWORD [LBy], START_LB_Y
+    mov     DWORD [DBx], START_DB_X
+    mov     DWORD [DBy], START_DB_Y
+    mov     DWORD [xmin], XMIN
+    jmp     positions_set
+
+    player2_setup:
+
+    mov     DWORD [xpos], STARTX_P2
+    mov     DWORD [ypos], STARTY_P2
+    mov     DWORD [NTx], START_NT_X_P2
+    mov     DWORD [NTy], START_NT_Y_P2
+    mov     DWORD [TDEx], START_TDE_X_P2
+    mov     DWORD [TDEy], START_TDE_Y_P2
+    mov     DWORD [BDEx], START_BDE_X_P2
+    mov     DWORD [BDEy], START_BDE_Y_P2
+    mov     DWORD [LBx], START_LB_X_P2
+    mov     DWORD [LBy], START_LB_Y_P2
+    mov     DWORD [DBx], START_DB_X_P2
+    mov     DWORD [DBy], START_DB_Y_P2
+    mov     DWORD [xmin], XMIN_P2
+ 
+    positions_set:
+    ;waits for user input to hike the ball and start loop
+        ; draw the game board
+        call    render
+ 
+        push    SNAP
+        call    usleep
+        add     esp, 4
+
+        ; get an action from the user
+        pre_snap_loop:
+        call    nonblocking_getchar
+        cmp     eax, -1
+        je      pre_snap_loop_end
+            jmp     pre_snap_loop
+        pre_snap_loop_end:
+        call    render
+        call    getchar
+        mov     edx, eax
+        mov     DWORD [distance_ran], -2
+        jmp     hike
+
+    ; the game happens in this loop
+    ; the steps are...
+    ;   1. render (draw) the current board
+    ;   2. get a character from the user
+    ;   3. store current xpos,ypos in esi,edi
+    ;   4. update xpos,ypos based on character from user
+    ;   5. check what's in the buffer (board) at new xpos,ypos
+    ;   6. if it's a wall, reset xpos,ypos to saved esi,edi
+    ;   7. otherwise, just continue! (xpos,ypos are ok)
+    game_loop:
+
+        dec     DWORD [timer]
+        cmp     DWORD [timer], 1200
+        jle     clock_at_zeros
+        mov     eax, DWORD [timer]
+        sub     eax, 1200
+        cdq
+        mov     ecx, 20
+        div     ecx
+        cdq
+        mov     ecx, 60
+        div     ecx
+        mov     DWORD [minutes], eax
+        mov     eax, edx
+        cdq
+        mov     ecx, 10
+        div     ecx
+        mov     DWORD [sec_tens], eax
+        mov     DWORD [sec_ones], edx
+        jmp     refresh_rate
+        clock_at_zeros:
+        mov     DWORD [minutes], 0
+        mov     DWORD [sec_tens], 0
+        mov     DWORD [sec_ones], 0
+
+        ; slow down refresh rate to set rate up top
+        refresh_rate:
+        push    TICK
+        call    usleep
+        add     esp, 4
+
+        mov     eax, DWORD [difficulty]
+        cmp     eax, 1
+        jne     hard_mode
+            mov     ebx, 40
+            jmp     run_timer
+        hard_mode:
+            mov     ebx, 20
+        run_timer:
+        mov     eax, DWORD [timer]
+        cdq
+        idiv    ebx
+        cmp     edx, 0
+        jne     skip_move
+            cmp     DWORD [player], 2
+            je      oppo_2_move
+            call    opponent_1_move
+            jmp     skip_move
+            oppo_2_move:
+            call    opponent_2_move
+
+        skip_move:
+
+        ; draw the game board
+        call    render
+
+        ; continue to refresh until tackled
+        call    nonblocking_getchar
+
+
+        ; al = -1
+        ; al = char
+        cmp     al, -1
+        je      check_tackle
+
+        hike:
+
+        ; store the current position
+        ; we will test if the new position is legal
+        ; if not, we will restore these
+        mov     esi, [xpos]
+        mov     edi, [ypos]
+
+        ; choose what to do
+
+        cmp     eax, EXITCHAR
+        je      game_loop_end
+        cmp     eax, UPCHAR
+        je      move_up
+        cmp     eax, LEFTCHAR
+        je      move_left
+        cmp     eax, DOWNCHAR
+        je      move_down
+        cmp     eax, RIGHTCHAR
+        je      move_right
+        cmp     eax, KICKCHAR
+        je      kick
+        cmp     eax, GIVEUPCHAR
+        je      game_loop_timer_zero
+        jmp     input_end           ; or just do nothing
+
+        ; move the player according to the input character
+        move_up:
+            dec     DWORD [ypos]
+            dec     DWORD [ypos]
+            dec     DWORD [ypos]
+            jmp     input_end
+        move_left:
+            dec     DWORD [xpos]
+            dec     DWORD [xpos]
+            dec     DWORD [xpos]
+            dec     DWORD [xpos]
+            dec     DWORD [xpos]
+            dec     DWORD [xpos]
+            cmp     DWORD [player], 2
+            je      player2_distance_decrease
+                inc     DWORD [distance_ran]
+                jmp     input_end
+            player2_distance_decrease:
+            dec     DWORD [distance_ran]
+            jmp     input_end
+        move_down:
+            inc     DWORD [ypos]
+            inc     DWORD [ypos]
+            inc     DWORD [ypos]
+            jmp     input_end
+        move_right:
+            inc     DWORD [xpos]
+            inc     DWORD [xpos]
+            inc     DWORD [xpos]
+            inc     DWORD [xpos]
+            inc     DWORD [xpos]
+            inc     DWORD [xpos]
+            cmp     DWORD [player], 2
+            je      player2_distance_increase
+                dec     DWORD [distance_ran]
+                jmp     input_end
+            player2_distance_increase:
+            inc     DWORD [distance_ran]
+            jmp     input_end
+        input_end:
+
+     ; wrap around after reaching endzone
+        cmp     DWORD [player], 2
+        je      player_2_wrap_check
+ 
+        mov     eax, DWORD [xpos]
+        mov     ecx, DWORD [xmin]
+        cmp     eax, ecx
+        jge     check_wall
+            mov     DWORD [xpos], STARTX
+            jmp     valid_move
+ 
+        player_2_wrap_check:
+        mov     eax, DWORD [xpos]
+        mov     ecx, DWORD [xmin]
+        cmp     eax, ecx
+        jle     check_wall
+            mov     DWORD [xpos], STARTX_P2
+            jmp     valid_move
+
+        ; (W * y) + x = pos
+
+        ; compare the current position to the wall character
+        check_wall:
+        mov     eax, WIDTH
+        mul     DWORD [ypos]
+        add     eax, [xpos]
+        lea     eax, [board + eax]
+        cmp     BYTE [eax], WALL_CHAR
+        jne     valid_move
+
+            ; opps, that was an invalid move, reset
+            invalid_move:
+            mov     DWORD [xpos], esi
+            mov     DWORD [ypos], edi
+
+        valid_move:
+
+        ; determine if player is tackled
+        check_tackle:
+        mov     eax, DWORD [xpos]
+        mov     ebx, DWORD [ypos]
+
+        ; check Nose Tackle
+        mov     ecx, DWORD [NTx]
+        mov     edx, DWORD [NTy]
+        cmp     eax, ecx
+        jne     check_tackle_TDE
+        cmp     ebx, edx
+        jne     check_tackle_TDE
+        jmp     player_tackled
+
+        ; check Top Defensive End
+        check_tackle_TDE:
+        mov     ecx, DWORD [TDEx]
+        mov     edx, DWORD [TDEy]
+        cmp     eax, ecx
+        jne     check_tackle_BDE
+        cmp     ebx, edx
+        jne     check_tackle_BDE
+        jmp     player_tackled
+
+        ; check Bottom Defensive End
+        check_tackle_BDE:
+        mov     ecx, DWORD [BDEx]
+        mov     edx, DWORD [BDEy]
+        cmp     eax, ecx
+        jne     check_tackle_LB
+        cmp     ebx, edx
+        jne     check_tackle_LB
+        jmp     player_tackled
+
+        ; check Line Backer
+        check_tackle_LB:
+        mov     ecx, DWORD [LBx]
+        mov     edx, DWORD [LBy]
+        cmp     eax, ecx
+        jne     check_tackle_DB
+        cmp     ebx, edx
+        jne     check_tackle_DB
+        jmp     player_tackled
+
+        ; check Defensive Back
+        check_tackle_DB:
+        mov     ecx, DWORD [DBx]
+        mov     edx, DWORD [DBy]
+        cmp     eax, ecx
+        jne     keep_running
+        cmp     ebx, edx
+        jne     keep_running
+        jmp     player_tackled
+
+    keep_running:
+    mov     eax, DWORD [distance_ran]
+    cmp     DWORD [score_distance], eax
+    jle     player_scored_TD
+    jmp     game_loop
+
+    player_tackled:
+    mov     eax, DWORD [distance_ran]
+    sub     DWORD [score_distance], eax
+    cmp     DWORD [first_down_distance], eax
+    jle     first_down
+        inc     DWORD [down]
+        cmp     DWORD [down], 5
+        jl      keep_possession
+            jmp     change_possession
+
+        keep_possession:
+        sub     DWORD [first_down_distance], eax
+        jmp     ball_is_on
+
+    first_down:
+    mov     DWORD [down], 1
+    cmp     DWORD [score_distance], 10
+    jge     first_and_10
+        mov     eax, DWORD [score_distance]
+        mov     DWORD [first_down_distance], eax
+        jmp     ball_is_on
+    first_and_10:
+    mov     DWORD [first_down_distance], 10
+    jmp     ball_is_on
+
+    ball_is_on:
+    cmp     DWORD [score_distance], 50
+    jle     less_than_fifty
+        mov     eax, DWORD [score_distance]
+        sub     eax, 50
+        mov     ebx, 50
+        sub     ebx, eax
+        mov     DWORD [ball_on], ebx
+        jmp     restart_game_loop
+
+        less_than_fifty:
+        mov     eax, DWORD [score_distance]
+        mov     DWORD[ball_on], eax
+        jmp     restart_game_loop
+
+    kick:
+    cmp     DWORD [score_distance], 50
+    jle     player_scored_FG
+       jmp     change_possession
+
+    player_scored_FG:
+    cmp     DWORD [player], 1
+    jne     player_2_FG
+        add     DWORD [player1_score], 3
+        jmp     change_possession
+    player_2_FG:
+    add     DWORD [player2_score], 3
+    jmp     change_possession
+
+    player_scored_TD:
+    cmp     DWORD [player], 1
+    jne     player_2_TD
+        add     DWORD [player1_score], 7
+        jmp     change_possession
+    player_2_TD:
+    add     DWORD [player2_score], 7
+    jmp     change_possession
+
+    change_possession:
+    cmp     DWORD [player], 1
+    je      player2_possession
+        mov     DWORD [player], 2
+        jmp     player1_possession
+
+    player1_possession:
+    mov     DWORD [player], 1
+    mov     DWORD [score_distance], 80
+    mov     DWORD [down], 1
+    mov     DWORD [first_down_distance], 10
+    mov     DWORD [ball_on], 20
+    jmp     restart_game_loop
+
+    player2_possession:
+    cmp     DWORD [num_players], 1
+    jne     cont_player2_possession
+        jmp     computer_possession
+    cont_player2_possession:
+    mov     DWORD [player], 2
+    mov     DWORD [score_distance], 80
+    mov     DWORD [down], 1
+    mov     DWORD [first_down_distance], 10
+    mov     DWORD [ball_on], 20
+    jmp     restart_game_loop
+
+    computer_possession:
+    mov     DWORD [player], 2
+    call    rand
+    cdq
+    mov     ebx, 10
+    idiv    ebx
+
+    cmp     edx, 2
+    jle     player_2_TD
+    cmp     edx, 7
+    jle     player_2_FG
+    jmp     player1_possession
+
+    game_loop_timer_zero:
+    mov     eax, DWORD [player1_score]
+    cmp     DWORD [player2_score], eax
+    je      tie
+    cmp     DWORD [player2_score], eax
+    jl      player_1_wins
+        mov     DWORD [winner], 2
+        jmp     end_game
+
+    player_1_wins:
+    mov     DWORD [winner], 1
+    jmp     end_game
+
+    tie:
+    mov     DWORD [winner], ' '
+    jmp     end_game
+
+    end_game:
+    mov     DWORD [timer], 0
+    call    end_screen
+    call    render
+
+    game_loop_end:
+
+    ; restore old terminal functionality
+    call raw_mode_off
+
+    ;***************CODE ENDS HERE*****************************
+    popa
+    mov     eax, 0
+    leave
+    ret
+
+ ; === FUNCTION ===
+ raw_mode_on:
+
+    push    ebp
+    mov     ebp, esp
+
+    push    raw_mode_on_cmd
+    call    system
+    add     esp, 4
+
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION ===
+raw_mode_off:
+
+    push    ebp
+    mov     ebp, esp
+
+    push    raw_mode_off_cmd
+    call    system
+    add     esp, 4
+
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION ===
+init_board:
+
+    push    ebp
+    mov     ebp, esp
+
+    ; FILE* and loop counter
+    ; ebp-4, ebp-8
+    sub     esp, 8
+
+    ; open the file
+    push    mode_r
+    push    board_file
+    call    fopen
+    add     esp, 8
+    mov     DWORD [ebp-4], eax
+
+    ; read the file data into the global buffer
+    ; line-by-line so we can ignore the newline characters
+    mov     DWORD [ebp-8], 0
+    read_loop:
+    cmp     DWORD [ebp-8], HEIGHT
+    je      read_loop_end
+
+        ; find the offset (WIDTH * counter)
+        mov     eax, WIDTH
+        mul     DWORD [ebp-8]
+        lea     ebx, [board + eax]
+
+        ; read the bytes into the buffer
+        push    DWORD [ebp-4]
+        push    WIDTH
+        push    1
+        push    ebx
+        call    fread
+        add     esp, 16
+
+        ; slurp up the newline
+        push    DWORD [ebp-4]
+        call    fgetc
+        add     esp, 4
+
+    inc     DWORD [ebp-8]
+    jmp     read_loop
+    read_loop_end:
+
+    ; close the open file handle
+    push    DWORD [ebp-4]
+    call    fclose
+    add     esp, 4
+
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION ===
+end_screen:
+
+    push    ebp
+    mov     ebp, esp
+
+    ; FILE* and loop counter
+    ; ebp-4, ebp-8
+    sub     esp, 8
+
+    ; open the file
+    push    mode_r
+    push    end_screen_file
+    call    fopen
+    add     esp, 8
+    mov     DWORD [ebp-4], eax
+
+    ; read the file data into the global buffer
+    ; line-by-line so we can ignore the newline characters
+    mov     DWORD [ebp-8], 0
+    read_loop_end_screen:
+    cmp     DWORD [ebp-8], HEIGHT
+    je      read_loop_end_screen_end
+
+        ; find the offset (WIDTH * counter)
+        mov     eax, WIDTH
+        mul     DWORD [ebp-8]
+        lea     ebx, [board + eax]
+
+        ; read the bytes into the buffer
+        push    DWORD [ebp-4]
+        push    WIDTH
+        push    1
+        push    ebx
+        call    fread
+        add     esp, 16
+
+        ; slurp up the newline
+        push    DWORD [ebp-4]
+        call    fgetc
+        add     esp, 4
+
+    inc     DWORD [ebp-8]
+    jmp     read_loop_end_screen
+    read_loop_end_screen_end:
+
+    ; close the open file handle
+    push    DWORD [ebp-4]
+    call    fclose
+    add     esp, 4
+
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION ===
+render:
+
+    push    ebp
+    mov     ebp, esp
+
+    ; two ints, for two loop counters
+    ; ebp-4, ebp-8
+    sub     esp, 8
+
+    ; clear the screen
+    push    clear_screen_cmd
+    call    system
+    add     esp, 4
+
+    ; print the help information
+    push    help_str
+    call    printf
+    add     esp, 4
+
+    push    DWORD [player]
+    push    DWORD [ball_on]
+    push    DWORD [first_down_distance]
+    push    DWORD [down]
+    push    DWORD [player2_score]
+    push    DWORD [player1_score]
+    push    DWORD [sec_ones]
+    push    DWORD [sec_tens]
+    push    DWORD [minutes]
+    push    scoreboard_fmt
+    call    printf
+    add     esp, 8
+
+    ; outside loop by height
+    ; i.e. for(c=0; c<height; c++)
+    mov     DWORD [ebp-4], 0
+    y_loop_start:
+    cmp     DWORD [ebp-4], HEIGHT
+    je      y_loop_end
+
+        ; inside loop by width
+        ; i.e. for(c=0; c<width; c++)
+        mov     DWORD [ebp-8], 0
+        x_loop_start:
+        cmp     DWORD [ebp-8], WIDTH
+        je      x_loop_end
+
+        cmp     DWORD [timer], 0
+        jne     check_players
+            cmp     DWORD [ebp-4], 8
+            jne     print_board
+            cmp     DWORD [ebp-8], 48
+            jne     print_board
+                jmp     print_winner
+ 
+            ; check for player (xpos,ypos)=(x,y)
+            check_players:
+            mov     eax, [xpos]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_ypos
+            dec     ecx
+            cmp     eax, ecx
+            je      check_ypos
+            dec     ecx
+            cmp     eax, ecx
+            je      check_ypos
+            jmp     check_NTx
+
+            check_ypos:
+            mov     eax, [ypos]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_player
+            dec     ecx
+            cmp     eax, ecx
+            je      print_player
+            jmp     check_NTx
+
+            ; check for Nose Tackle (xpos,ypos)=(x,y)
+            check_NTx:
+            mov     eax, [NTx]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_NTy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_NTy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_NTy
+            jmp     check_TDEx
+
+            check_NTy:
+            mov     eax, [NTy]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_opponent
+            dec     ecx
+            cmp     eax, ecx
+            je      print_opponent
+            jmp     check_TDEx
+
+            ; check for Top Defensive End (xpos,ypos)=(x,y)
+            check_TDEx:
+            mov     eax, [TDEx]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_TDEy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_TDEy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_TDEy
+            jmp     check_BDEx
+
+            check_TDEy:
+            mov     eax, [TDEy]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_opponent
+            dec     ecx
+            cmp     eax, ecx
+            je      print_opponent
+            jmp     check_BDEx
+
+            ; check for Top Defensive End (xpos,ypos)=(x,y)
+            check_BDEx:
+            mov     eax, [BDEx]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_BDEy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_BDEy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_BDEy
+            jmp     check_LBx
+
+            check_BDEy:
+            mov     eax, [BDEy]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_opponent
+            dec     ecx
+            cmp     eax, ecx
+            je      print_opponent
+            jmp     check_LBx
+
+            ; check for Top Defensive End (xpos,ypos)=(x,y)
+            check_LBx:
+            mov     eax, [LBx]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_LBy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_LBy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_LBy
+            jmp     check_DBx
+
+            check_LBy:
+            mov     eax, [LBy]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_opponent
+            dec     ecx
+            cmp     eax, ecx
+            je      print_opponent
+            jmp     check_DBx
+
+            ; check for Bottom Defensive End (xpos,ypos)=(x,y)
+            check_DBx:
+            mov     eax, [DBx]
+            mov     ecx, DWORD [ebp-8]
+            cmp     eax, ecx
+            je      check_DBy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_DBy
+            dec     ecx
+            cmp     eax, ecx
+            je      check_DBy
+            jmp     print_board
+
+            check_DBy:
+            mov     eax, [DBy]
+            mov     ecx, DWORD [ebp-4]
+            cmp     eax, ecx
+            je      print_opponent
+            dec     ecx
+            cmp     eax, ecx
+            je      print_opponent
+            jmp     print_board
+
+                ; if both were equal, print the player
+            print_player:
+                push    PLAYER_CHAR
+                push    color_magenta
+                call    printf
+                add     esp, 4
+                jmp     print_end
+            print_opponent:
+                push    OPPONENT_CHAR
+                push    color_red
+                call    printf
+                add     esp, 4
+                jmp     print_end
+            print_winner:
+                cmp     DWORD [winner], 1
+                jne     print_player_2
+                    push    PLAYER_1_CHAR
+                    jmp     print_end
+            print_player_2:
+                cmp     DWORD [winner], 2
+                jne     print_board
+                    push    PLAYER_2_CHAR
+                    jmp     print_end
+            print_board:
+                ; otherwise print whatever's in the buffer
+                mov     eax, [ebp-4]
+                mov     ebx, WIDTH
+                mul     ebx
+                add     eax, [ebp-8]
+                mov     ebx, 0
+                mov     bl, BYTE [board + eax]
+
+                cmp     bl, '#'
+                jne     not_pound
+                    push    color_green
+                    call    printf
+                    add     esp, 4
+                not_pound:
+                cmp     bl, '@'
+                jne     not_at
+                    push    color_blue
+                    call    printf
+                    add     esp, 4
+                not_at:
+                cmp     bl, '_'
+                jne     not_underscore
+                    push    color_yellow
+                    call    printf
+                    add     esp, 4
+                not_underscore:
+                cmp     bl, '|'
+                jne     not_bar
+                    push    color_yellow
+                    call    printf
+                    add     esp, 4
+                not_bar:
+
+                push    ebx
+            print_end:
+            call    putchar
+            add     esp, 4
+            push    color_default
+            call    printf
+            add     esp, 4
+
+        inc     DWORD [ebp-8]
+        jmp     x_loop_start
+        x_loop_end:
+
+        ; write a carriage return (necessary when in raw mode)
+        push    0x0d
+        call    putchar
+        add     esp, 4
+
+        ; write a newline
+        push    0x0a
+        call    putchar
+        add     esp, 4
+
+    inc     DWORD [ebp-4]
+    jmp     y_loop_start
+    y_loop_end:
+
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION ===
+nonblocking_getchar:
+
+; returns -1 on no-data
+; returns char on succes
+
+; magic values
+%define F_GETFL 3
+%define F_SETFL 4
+%define O_NONBLOCK 2048
+%define STDIN 0
+
+        push    ebp
+        mov     ebp, esp
+
+        ; single int used to hold flags
+        ; single character (aligned to 4 bytes) return
+        sub     esp, 8
+
+        ; get current stdin flags
+        ; flags = fcntl(stdin, F_GETFL, 0)
+        push    0
+        push    F_GETFL
+        push    STDIN
+        call    fcntl
+        add     esp, 12
+        mov     DWORD [ebp-4], eax
+
+        ; set non-blocking mode on stdin
+        ; fcntl(stdin, F_SETFL, flags | O_NONBLOCK)
+        or      DWORD [ebp-4], O_NONBLOCK
+        push    DWORD [ebp-4]
+        push    F_SETFL
+        push    STDIN
+        call    fcntl
+        add     esp, 12
+
+        call    getchar
+        mov     DWORD [ebp-8], eax
+
+        ; restore blocking mode
+        ; fcntl(stdin, F_SETFL, flags ^ O_NONBLOCK
+        xor     DWORD [ebp-4], O_NONBLOCK
+        push    DWORD [ebp-4]
+        push    F_SETFL
+        push    STDIN
+        call    fcntl
+        add     esp, 12
+
+        mov     eax, DWORD [ebp-8]
+
+        mov     esp, ebp
+        pop     ebp
+        ret
+
+; === FUNCTION +++
+opponent_1_move:
+
+; moves opponent with random numbers
+; only moves certain opponants depending on where the player is
+    push    ebp
+    mov     ebp, esp
+
+
+    cmp     DWORD [xpos], 55
+    jge     move_line
+    jmp     move_backers
+
+    move_line:
+    call    rand
+    cdq
+    mov     ebx, 6
+    idiv    ebx
+
+    cmp     edx, 0
+    je      move_TDE
+    cmp     edx, 5
+    je      move_BDE
+    jmp     move_NT
+
+    move_backers:
+    call    rand
+    cdq
+    mov     ebx, 10
+    idiv    ebx
+    cmp     edx, 5
+    jge     end_move
+
+    cmp     DWORD [xpos], 37
+    jl      move_DB
+    jmp     move_LB
+
+    move_NT:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [NTy], eax
+    jl      move_NT_down
+    cmp     DWORD [NTy], eax
+    jg      move_NT_up
+    cmp     DWORD [NTy], eax
+    je      move_NT_forward
+
+        move_NT_down:
+            mov     eax, DWORD [BDEx]
+            cmp     DWORD [NTx], eax
+            je      move_NT_forward
+                add     DWORD [NTy], 3
+                jmp     end_move
+
+        move_NT_up:
+            mov     eax, DWORD [TDEx]
+            cmp     DWORD [NTx], eax
+            je      move_NT_forward
+                sub     DWORD [NTy], 3
+                jmp     end_move
+
+        move_NT_forward:
+            mov     eax, DWORD [BDEy]
+            cmp     DWORD [NTy], eax
+            je      end_move
+            mov     eax, DWORD [TDEy]
+            cmp     DWORD [NTy], eax
+            je      end_move
+            cmp     DWORD [BDEx], 67
+            je      end_move
+                add     DWORD [NTx], 6
+                jmp     end_move
+
+    move_TDE:
+    mov     eax, DWORD [NTy]
+    cmp     DWORD [TDEy], eax
+    jge     move_TDE_up
+    cmp     DWORD [TDEy], eax
+    jl      move_TDE_down
+
+        move_TDE_up:
+            cmp     DWORD [TDEy], 3
+            je      move_TDE_down
+                sub     DWORD [TDEy], 3
+                jmp     end_move
+
+        move_TDE_down:
+            cmp     DWORD [TDEy], 6
+            je      move_TDE_forward
+            mov     edi, DWORD [BDEy]
+            sub     edi, 3
+            cmp     DWORD [TDEy], edi
+            je      move_TDE_forward
+            mov     eax, DWORD [NTx]
+            cmp     DWORD [TDEx], eax
+            je      move_TDE_forward
+                add     DWORD [TDEy], 3
+                jmp     end_move
+
+        move_TDE_forward:
+            mov     eax, DWORD [NTy]
+            cmp     DWORD [TDEy], eax
+            je      end_move
+            cmp     DWORD [BDEx], 67
+            je      end_move
+                add     DWORD [BDEx], 6
+                jmp     end_move
+
+    move_BDE:
+    mov     eax, DWORD [NTy]
+    cmp     DWORD [BDEy], eax
+    jge     move_BDE_down
+    cmp     DWORD [BDEy], eax
+    jl      move_BDE_up
+
+        move_BDE_down:
+            cmp     DWORD [BDEy], 9
+            je      move_BDE_forward
+                add     DWORD [BDEy], 3
+                jmp     end_move
+
+        move_BDE_up:
+            cmp     DWORD [BDEy], 6
+            je      move_BDE_forward
+            mov     edi, DWORD [TDEy]
+            add     edi, 3
+            cmp     DWORD [BDEy], edi
+            je      move_BDE_forward
+            mov     eax, DWORD [NTx]
+            cmp     DWORD [BDEx], eax
+            je      move_BDE_forward
+                sub     DWORD [BDEy], 3
+                jmp     end_move
+
+        move_BDE_forward:
+            mov     eax, DWORD [NTy]
+            cmp     DWORD [BDEy], eax
+            je      end_move
+            cmp     DWORD [BDEx], 67
+            je      end_move
+                add     DWORD [BDEx], 6
+                jmp     end_move
+
+    move_LB:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [LBy], eax
+    jg      move_LB_up
+    cmp     DWORD [LBy], eax
+    jl      move_LB_down
+    jmp     end_move
+
+        move_LB_up:
+            sub     DWORD [LBy], 3
+            jmp     end_move
+
+        move_LB_down:
+            add     DWORD [LBy], 3
+            jmp     end_move
+
+    move_DB:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [DBy], eax
+    jg      move_DB_up
+    cmp     DWORD [DBy], eax
+    jl      move_DB_down
+    jmp     end_move
+
+        move_DB_up:
+            sub     DWORD [DBy], 3
+            jmp     end_move
+
+        move_DB_down:
+            add     DWORD [DBy], 3
+            jmp     end_move
+
+    end_move:
+    mov     esp, ebp
+    pop     ebp
+    ret
+
+; === FUNCTION +++
+opponent_2_move:
+
+; moves opponent with random numbers
+; only moves certain opponants depending on where the player is
+   push    ebp
+   mov     ebp, esp
+
+
+    cmp     DWORD [xpos], 31
+    jle     move_line2
+    jmp     move_backers2
+
+    move_line2:
+    call    rand
+    cdq
+    mov     ebx, 6
+    idiv    ebx
+
+    cmp     edx, 0
+    je      move_TDE2
+    cmp     edx, 5
+    je      move_BDE2
+    jmp     move_NT2
+
+    move_backers2:
+    call    rand
+    cdq
+    mov     ebx, 10
+    idiv    ebx
+    cmp     edx, 5
+    jge     end_move
+
+    cmp     DWORD [xpos], 55
+    jge     move_DB2
+    jmp     move_LB2
+
+    move_NT2:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [NTy], eax
+    jl      move_NT_down2
+    cmp     DWORD [NTy], eax
+    jg      move_NT_up2
+    cmp     DWORD [NTy], eax
+    je      move_NT_forward2
+
+        move_NT_down2:
+            mov     eax, DWORD [BDEx]
+            cmp     DWORD [NTx], eax
+            je      move_NT_forward2
+                add     DWORD [NTy], 3
+                jmp     end_move2
+
+        move_NT_up2:
+            mov     eax, DWORD [TDEx]
+            cmp     DWORD [NTx], eax
+            je      move_NT_forward2
+                sub     DWORD [NTy], 3
+                jmp     end_move2
+
+        move_NT_forward2:
+            mov     eax, DWORD [BDEy]
+            cmp     DWORD [NTy], eax
+            je      end_move2
+            mov     eax, DWORD [TDEy]
+            cmp     DWORD [NTy], eax
+            je      end_move2
+            cmp     DWORD [BDEx], 67
+            je      end_move2
+                sub     DWORD [NTx], 6
+                jmp     end_move2
+
+    move_TDE2:
+    mov     eax, DWORD [NTy]
+    cmp     DWORD [TDEy], eax
+    jge     move_TDE_up2
+    cmp     DWORD [TDEy], eax
+    jl      move_TDE_down2
+
+        move_TDE_up2:
+            cmp     DWORD [TDEy], 3
+            je      move_TDE_down2
+                sub     DWORD [TDEy], 3
+                jmp     end_move2
+
+        move_TDE_down2:
+            cmp     DWORD [TDEy], 6
+            je      move_TDE_forward2
+            mov     edi, DWORD [BDEy]
+            sub     edi, 3
+            cmp     DWORD [TDEy], edi
+            je      move_TDE_forward2
+            mov     eax, DWORD [NTx]
+            cmp     DWORD [TDEx], eax
+            je      move_TDE_forward2
+                add     DWORD [TDEy], 3
+                jmp     end_move2
+
+        move_TDE_forward2:
+            mov     eax, DWORD [NTy]
+            cmp     DWORD [TDEy], eax
+            je      end_move2
+            cmp     DWORD [BDEx], 67
+            je      end_move2
+                sub     DWORD [BDEx], 6
+                jmp     end_move2
+
+    move_BDE2:
+    mov     eax, DWORD [NTy]
+    cmp     DWORD [BDEy], eax
+    jge     move_BDE_down2
+    cmp     DWORD [BDEy], eax
+    jl      move_BDE_up2
+
+        move_BDE_down2:
+            cmp     DWORD [BDEy], 9
+            je      move_BDE_forward2
+                add     DWORD [BDEy], 3
+                jmp     end_move2
+
+        move_BDE_up2:
+            cmp     DWORD [BDEy], 6
+            je      move_BDE_forward2
+            mov     edi, DWORD [TDEy]
+            add     edi, 3
+            cmp     DWORD [BDEy], edi
+            je      move_BDE_forward2
+            mov     eax, DWORD [NTx]
+            cmp     DWORD [BDEx], eax
+            je      move_BDE_forward2
+                sub     DWORD [BDEy], 3
+                jmp     end_move2
+
+        move_BDE_forward2:
+            mov     eax, DWORD [NTy]
+            cmp     DWORD [BDEy], eax
+            je      end_move2
+            cmp     DWORD [BDEx], 67
+            je      end_move2
+                sub     DWORD [BDEx], 6
+                jmp     end_move2
+
+    move_LB2:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [LBy], eax
+    jg      move_LB_up2
+    cmp     DWORD [LBy], eax
+    jl      move_LB_down2
+    jmp     end_move2
+
+        move_LB_up2:
+            sub     DWORD [LBy], 3
+            jmp     end_move2
+
+        move_LB_down2:
+            add     DWORD [LBy], 3
+            jmp     end_move2
+
+    move_DB2:
+    mov     eax, DWORD [ypos]
+    cmp     DWORD [DBy], eax
+    jg      move_DB_up2
+    cmp     DWORD [DBy], eax
+    jl      move_DB_down2
+    jmp     end_move2
+
+        move_DB_up2:
+            sub     DWORD [DBy], 3
+            jmp     end_move2
+
+        move_DB_down2:
+            add     DWORD [DBy], 3
+            jmp     end_move2
+
+    end_move2:
+    mov     esp, ebp
+    pop     ebp
+    ret                                                                   
